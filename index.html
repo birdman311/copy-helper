@@ -12,6 +12,7 @@
   .help { margin: 0 0 12px; color: #444; }
   #info { font-size: 24px; font-weight: bold; margin: 8px 0; }
   #msg { min-height: 34px; margin: 8px 0; font-weight: bold; }
+  #diag { font-size: 16px; color: #444; word-break: break-all; margin: 0 0 8px; }
   .ok { color: #0a7a2f; }
   .bad { color: #b00020; }
   .row { margin: 12px 0; }
@@ -34,6 +35,7 @@
     <button id="next">Next &rarr;</button>
   </div>
   <div id="msg" aria-live="polite"></div>
+  <div id="diag"></div>
   <textarea id="box" readonly></textarea>
   <div class="row">
     Characters per part:<br>
@@ -118,20 +120,61 @@
     save('sig', text.length);
   }
 
+  // Tries the old copy command first (it has to run right inside the tap), then the newer
+  // Clipboard API. Notes on what failed are passed back so the page can show them.
   function copyText(s, cb) {
-    function fallback() {
-      var ok = false, ta = $('box');
-      ta.focus();
-      ta.select();
-      try { ta.setSelectionRange(0, ta.value.length); } catch (e) {}
-      try { ok = document.execCommand('copy'); } catch (e2) { ok = false; }
-      cb(ok);
+    var notes = [];
+
+    function selectVisible() {
+      var box = $('box');
+      box.focus();
+      box.select();
+      try { box.setSelectionRange(0, box.value.length); } catch (e) {}
     }
+
+    function viaCommand() {
+      var ok = false, ta = document.createElement('textarea');
+      function onCopy(e) {
+        if (e.clipboardData && e.clipboardData.setData) {
+          e.clipboardData.setData('text/plain', s);
+          e.preventDefault();
+        }
+      }
+      ta.value = s;
+      ta.style.cssText = 'position:fixed;left:0;top:0;width:1px;height:1px;opacity:0;font-size:16px';
+      document.body.appendChild(ta);
+      document.addEventListener('copy', onCopy);
+      try {
+        ta.focus();
+        ta.select();
+        try { ta.setSelectionRange(0, s.length); } catch (e1) {}
+        ok = document.execCommand('copy');
+        if (!ok) notes.push('copy command returned false');
+      } catch (e2) {
+        notes.push('copy command: ' + (e2 && e2.name ? e2.name : 'error'));
+      }
+      document.removeEventListener('copy', onCopy);
+      document.body.removeChild(ta);
+      return ok;
+    }
+
+    if (viaCommand()) { cb(true, ''); return; }
     if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(s).then(function () { cb(true); }, fallback);
+      try {
+        navigator.clipboard.writeText(s).then(function () { cb(true, ''); }, function (err) {
+          notes.push('clipboard API: ' + (err && err.name ? err.name : 'rejected'));
+          selectVisible();
+          cb(false, notes.join('; '));
+        });
+        return;
+      } catch (e3) {
+        notes.push('clipboard API: ' + (e3 && e3.name ? e3.name : 'error'));
+      }
     } else {
-      fallback();
+      notes.push('clipboard API: not available');
     }
+    selectVisible();
+    cb(false, notes.join('; '));
   }
 
   $('prev').onclick = function () { idx--; say(''); show(); };
@@ -139,12 +182,14 @@
   $('jump').onchange = function () { idx = parseInt($('jump').value, 10); say(''); show(); };
   $('copy').onclick = function () {
     if (!parts.length) return;
-    copyText(parts[idx], function (ok) {
+    copyText(parts[idx], function (ok, details) {
       if (ok) {
         done[idx] = true;
         say('Copied! Paste it in your app, then come back for the next part.', 'ok');
+        $('diag').textContent = '';
       } else {
         say('Could not copy automatically. The text is selected: use the system copy if there is one.', 'bad');
+        $('diag').textContent = 'Details: ' + details + '. Browser: ' + navigator.userAgent;
       }
       refresh();
     });
