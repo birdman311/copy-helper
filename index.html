@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Copy Helper</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #fff; color: #111; font-family: Arial, Helvetica, sans-serif; font-size: 22px; line-height: 1.4; }
+  .wrap { max-width: 900px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 30px; margin: 0 0 4px; }
+  .help { margin: 0 0 12px; color: #444; }
+  #info { font-size: 24px; font-weight: bold; margin: 8px 0; }
+  #msg { min-height: 34px; margin: 8px 0; font-weight: bold; }
+  .ok { color: #0a7a2f; }
+  .bad { color: #b00020; }
+  .row { margin: 12px 0; }
+  button { font-size: 26px; min-height: 68px; min-width: 120px; padding: 8px 22px; margin: 0 8px 8px 0; border: 3px solid #111; border-radius: 12px; background: #eee; color: #111; font-family: inherit; cursor: pointer; }
+  button.big { background: #e60012; border-color: #8c000b; color: #fff; min-width: 260px; }
+  button.on { background: #111; color: #fff; }
+  button:disabled { opacity: .4; cursor: default; }
+  textarea { width: 100%; height: 340px; font-size: 20px; font-family: inherit; line-height: 1.4; padding: 10px; border: 3px solid #111; border-radius: 12px; }
+  select { font-size: 24px; min-height: 56px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Copy Helper</h1>
+  <p class="help">Tap Copy, paste into your app, then come back for the next part.</p>
+  <div id="info">Loading...</div>
+  <div class="row">
+    <button id="prev">&larr; Prev</button>
+    <button id="copy" class="big">Copy this part</button>
+    <button id="next">Next &rarr;</button>
+  </div>
+  <div id="msg" aria-live="polite"></div>
+  <textarea id="box" readonly></textarea>
+  <div class="row">
+    Characters per part:<br>
+    <button class="size" data-size="500">500</button>
+    <button class="size" data-size="1000">1000</button>
+    <button class="size" data-size="2000">2000</button>
+    <button class="size" data-size="4000">4000</button>
+  </div>
+  <div class="row">Jump to: <select id="jump"></select></div>
+</div>
+
+<script>
+// Plain ES5 on purpose: the Switch browser is old.
+(function () {
+  var SIZES = [500, 1000, 2000, 4000];
+  var text = '', parts = [], done = {}, idx = 0, size = 1000;
+
+  function $(id) { return document.getElementById(id); }
+  function save(k, v) { try { localStorage.setItem('copyhelper_' + k, String(v)); } catch (e) {} }
+  function load(k) { try { return localStorage.getItem('copyhelper_' + k); } catch (e) { return null; } }
+  function say(s, cls) { var m = $('msg'); m.textContent = s || ''; m.className = cls || ''; }
+  function isSpace(c) { return /\s/.test(c); }
+
+  // Cuts at a line break, else a space, so words are never split. Each part keeps its
+  // trailing whitespace, so pasting the parts back to back rebuilds the original text.
+  function split(t, max) {
+    var out = [], n = t.length, start = 0, end, i, lim, c;
+    while (start < n && isSpace(t.charAt(start))) start++;
+    while (start < n) {
+      if (n - start <= max) { out.push(t.slice(start)); break; }
+      lim = start + (max >> 1);
+      i = t.lastIndexOf('\n', start + max - 1);
+      if (i < lim) i = t.lastIndexOf(' ', start + max - 1);
+      if (i < lim) {
+        end = start + max;
+        c = t.charCodeAt(end - 1);
+        if (c >= 0xD800 && c <= 0xDBFF) end--;
+      } else {
+        end = i;
+        while (end < n && isSpace(t.charAt(end))) end++;
+      }
+      out.push(t.slice(start, end));
+      start = end;
+    }
+    return out;
+  }
+
+  function build() {
+    var sel = $('jump'), i, o;
+    parts = split(text, size);
+    done = {};
+    sel.options.length = 0;
+    for (i = 0; i < parts.length; i++) {
+      o = document.createElement('option');
+      o.value = i;
+      sel.appendChild(o);
+    }
+  }
+
+  function refresh() {
+    var opts = $('jump').options, btns = document.getElementsByClassName('size'), i;
+    $('info').textContent = 'Part ' + (idx + 1) + ' of ' + parts.length + '  ·  ' +
+      parts[idx].length + ' characters' + (done[idx] ? '  ✓ copied' : '');
+    $('prev').disabled = idx === 0;
+    $('next').disabled = idx === parts.length - 1;
+    for (i = 0; i < opts.length; i++) opts[i].text = 'Part ' + (i + 1) + (done[i] ? ' ✓' : '');
+    $('jump').selectedIndex = idx;
+    for (i = 0; i < btns.length; i++) {
+      btns[i].className = 'size' + (parseInt(btns[i].getAttribute('data-size'), 10) === size ? ' on' : '');
+    }
+  }
+
+  function show() {
+    if (!parts.length) { $('info').textContent = 'No text found in text.txt'; return; }
+    if (idx < 0) idx = 0;
+    if (idx > parts.length - 1) idx = parts.length - 1;
+    $('box').value = parts[idx];
+    $('box').scrollTop = 0;
+    refresh();
+    save('idx', idx);
+    save('size', size);
+    save('sig', text.length);
+  }
+
+  function copyText(s, cb) {
+    function fallback() {
+      var ok = false, ta = $('box');
+      ta.focus();
+      ta.select();
+      try { ta.setSelectionRange(0, ta.value.length); } catch (e) {}
+      try { ok = document.execCommand('copy'); } catch (e2) { ok = false; }
+      cb(ok);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(s).then(function () { cb(true); }, fallback);
+    } else {
+      fallback();
+    }
+  }
+
+  $('prev').onclick = function () { idx--; say(''); show(); };
+  $('next').onclick = function () { idx++; say(''); show(); };
+  $('jump').onchange = function () { idx = parseInt($('jump').value, 10); say(''); show(); };
+  $('copy').onclick = function () {
+    if (!parts.length) return;
+    copyText(parts[idx], function (ok) {
+      if (ok) {
+        done[idx] = true;
+        say('Copied! Paste it in your app, then come back for the next part.', 'ok');
+      } else {
+        say('Could not copy automatically. The text is selected: use the system copy if there is one.', 'bad');
+      }
+      refresh();
+    });
+  };
+
+  function setSize(n) {
+    var offset = 0, pos = 0, i;
+    for (i = 0; i < idx; i++) offset += parts[i].length;
+    size = n;
+    build();
+    idx = 0;
+    for (i = 0; i < parts.length; i++) {
+      idx = i;
+      if (pos + parts[i].length > offset) break;
+      pos += parts[i].length;
+    }
+    say('');
+    show();
+  }
+  (function () {
+    var btns = document.getElementsByClassName('size'), i;
+    for (i = 0; i < btns.length; i++) {
+      btns[i].onclick = function () { setSize(parseInt(this.getAttribute('data-size'), 10)); };
+    }
+  })();
+
+  function start(t) {
+    var s = parseInt(load('size'), 10);
+    text = t.replace(/\r\n?/g, '\n');
+    size = SIZES.indexOf(s) >= 0 ? s : 1000;
+    build();
+    idx = load('sig') === String(text.length) ? (parseInt(load('idx'), 10) || 0) : 0;
+    show();
+  }
+
+  var xhr = new XMLHttpRequest();
+  xhr.open('GET', 'text.txt?v=' + new Date().getTime(), true);
+  xhr.onreadystatechange = function () {
+    if (xhr.readyState !== 4) return;
+    if ((xhr.status === 200 || xhr.status === 0) && xhr.responseText) {
+      start(xhr.responseText);
+    } else {
+      $('info').textContent = 'Could not load text.txt';
+      say('Put text.txt next to this page and open it from a web server, not as a local file.', 'bad');
+    }
+  };
+  xhr.send();
+})();
+</script>
+</body>
+</html>

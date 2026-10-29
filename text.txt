@@ -1,0 +1,5 @@
+Replace everything in this file with the text you want to copy on the Switch 2.
+
+Keep it as plain text saved as UTF-8. Blank lines between paragraphs are kept, and the page never cuts a word in half when it splits the text into parts.
+
+This is a second sample paragraph so you can see how the parts work. Pick a part size at the bottom of the page, tap Copy, paste into your app, then come back and tap Next for the following part.
